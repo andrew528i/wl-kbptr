@@ -7,7 +7,8 @@
 #include "utils_wayland.h"
 #include "viewporter-client-protocol.h"
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
-#include "wlr-screencopy-unstable-v1-client-protocol.h"
+#include "ext-image-copy-capture-v1-client-protocol.h"
+#include "ext-image-capture-source-v1-client-protocol.h"
 #include "wlr-virtual-pointer-unstable-v1-client-protocol.h"
 #include "xdg-output-unstable-v1-client-protocol.h"
 
@@ -524,10 +525,20 @@ static void handle_registry_global(
             registry, name, &wp_fractional_scale_manager_v1_interface, 1
         );
 #if OPENCV_ENABLED
-    } else if (strcmp(interface, zwlr_screencopy_manager_v1_interface.name) ==
-               0) {
-        state->wl_screencopy_manager = wl_registry_bind(
-            registry, name, &zwlr_screencopy_manager_v1_interface, 1
+    } else if (strcmp(
+                   interface,
+                   ext_image_copy_capture_manager_v1_interface.name
+               ) == 0) {
+        state->ext_capture_manager = wl_registry_bind(
+            registry, name, &ext_image_copy_capture_manager_v1_interface, 1
+        );
+    } else if (strcmp(
+                   interface,
+                   ext_output_image_capture_source_manager_v1_interface.name
+               ) == 0) {
+        state->ext_output_source_manager = wl_registry_bind(
+            registry, name,
+            &ext_output_image_capture_source_manager_v1_interface, 1
         );
 #endif
     }
@@ -665,7 +676,8 @@ int main(int argc, char **argv) {
         .wl_layer_surface    = NULL,
         .surface_configured  = false,
 #if OPENCV_ENABLED
-        .wl_screencopy_manager = NULL,
+        .ext_capture_manager        = NULL,
+        .ext_output_source_manager  = NULL,
 #endif
         .wp_viewporter        = NULL,
         .fractional_scale_mgr = NULL,
@@ -950,8 +962,13 @@ int main(int argc, char **argv) {
     zwlr_layer_shell_v1_destroy(state.wl_layer_shell);
 
 #if OPENCV_ENABLED
-    if (state.wl_screencopy_manager) {
-        zwlr_screencopy_manager_v1_destroy(state.wl_screencopy_manager);
+    if (state.ext_capture_manager) {
+        ext_image_copy_capture_manager_v1_destroy(state.ext_capture_manager);
+    }
+    if (state.ext_output_source_manager) {
+        ext_output_image_capture_source_manager_v1_destroy(
+            state.ext_output_source_manager
+        );
     }
 #endif
 

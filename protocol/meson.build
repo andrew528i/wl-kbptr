@@ -19,9 +19,10 @@ client_protocols = [
   wl_protocol_dir / 'stable/xdg-shell/xdg-shell.xml',
   wl_protocol_dir / 'unstable/xdg-output/xdg-output-unstable-v1.xml',
   wl_protocol_dir / 'stable/viewporter/viewporter.xml',
+  wl_protocol_dir / 'staging/ext-image-copy-capture/ext-image-copy-capture-v1.xml',
+  'ext-image-capture-source-v1.xml',
   'wlr-layer-shell-unstable-v1.xml',
   'wlr-virtual-pointer-unstable-v1.xml',
-  'wlr-screencopy-unstable-v1.xml',
   'fractional-scale-v1.xml',
 ]
 

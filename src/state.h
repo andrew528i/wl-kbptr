@@ -9,7 +9,8 @@
 #include "utils.h"
 #include "viewporter-client-protocol.h"
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
-#include "wlr-screencopy-unstable-v1-client-protocol.h"
+#include "ext-image-copy-capture-v1-client-protocol.h"
+#include "ext-image-capture-source-v1-client-protocol.h"
 #include "wlr-virtual-pointer-unstable-v1-client-protocol.h"
 
 #include <stdbool.h>
@@ -118,7 +119,8 @@ struct state {
     struct zwlr_layer_surface_v1           *wl_layer_surface;
     bool                                    surface_configured;
 #if OPENCV_ENABLED
-    struct zwlr_screencopy_manager_v1 *wl_screencopy_manager;
+    struct ext_image_copy_capture_manager_v1 *ext_capture_manager;
+    struct ext_output_image_capture_source_manager_v1 *ext_output_source_manager;
 #endif
     struct zxdg_output_manager_v1 *xdg_output_manager;
     struct wl_list                 outputs;
