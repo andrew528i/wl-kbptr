@@ -67,7 +67,7 @@ static void get_area_from_screenshot(
     ms->num_areas = compute_target_from_img_buffer(
         scrcpy_buffer->data, scrcpy_buffer->height, scrcpy_buffer->width,
         scrcpy_buffer->stride, scrcpy_buffer->format, output_transform, area,
-        &ms->areas
+        &ms->areas, state->config.mode_floating.min_target_distance
     );
     destroy_scrcpy_buffer(scrcpy_buffer);
 }

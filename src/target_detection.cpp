@@ -338,10 +338,48 @@ static size_t filter_rects(
     return not_filtered_count;
 }
 
+static void filter_by_distance(
+    const std::vector<cv::Rect2d> &rects, std::vector<bool> &filtered,
+    double min_distance
+) {
+    if (min_distance <= 0)
+        return;
+
+    double min_dist_sq = min_distance * min_distance;
+
+    for (size_t i = 0; i < rects.size(); i++) {
+        if (filtered[i])
+            continue;
+
+        double cx_i = rects[i].x + rects[i].width / 2.;
+        double cy_i = rects[i].y + rects[i].height / 2.;
+        double area_i = rects[i].width * rects[i].height;
+
+        for (size_t j = i + 1; j < rects.size(); j++) {
+            if (filtered[j])
+                continue;
+
+            double cx_j = rects[j].x + rects[j].width / 2.;
+            double cy_j = rects[j].y + rects[j].height / 2.;
+            double dx = cx_i - cx_j;
+            double dy = cy_i - cy_j;
+
+            if (dx * dx + dy * dy < min_dist_sq) {
+                double area_j = rects[j].width * rects[j].height;
+                if (area_i < area_j)
+                    filtered[i] = true;
+                else
+                    filtered[j] = true;
+            }
+        }
+    }
+}
+
 int compute_target_from_img_buffer(
     void *data, uint32_t height, uint32_t width, uint32_t stride,
     enum wl_shm_format format, enum wl_output_transform transform,
-    struct rect initial_area, struct rect **areas
+    struct rect initial_area, struct rect **areas,
+    double min_target_distance
 ) {
     cv::Mat m1 =
         get_gray_scale_from_buffer(data, height, width, stride, format);
@@ -366,7 +404,14 @@ int compute_target_from_img_buffer(
     std::vector<bool>       filtered;
 
     compute_rects(contours, rects, scale, initial_area.x, initial_area.y);
-    int final_rect_count = filter_rects(rects, hierachy, filtered);
+    filter_rects(rects, hierachy, filtered);
+    filter_by_distance(rects, filtered, min_target_distance);
+
+    size_t final_rect_count = 0;
+    for (const auto &f : filtered) {
+        if (!f)
+            final_rect_count++;
+    }
 
     size_t area_i = 0;
     *areas = (struct rect *)malloc(sizeof(struct rect) * final_rect_count);

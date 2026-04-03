@@ -386,7 +386,8 @@ static struct section_def section_defs[] = {
         MF_FIELD(label_font_size, "12 50% 100", parse_relative_font_size, noop),
         MF_FIELD(
             label_symbols, "abcdefghijklmnopqrstuvwxyz", parse_str, free_str
-        )
+        ),
+        MF_FIELD(min_target_distance, "0", parse_double, noop)
     ),
     SECTION(
         mode_bisect, MB_FIELD(label_color, "#fffd", parse_color, noop),
