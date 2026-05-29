@@ -150,6 +150,10 @@ bool compute_initial_area(struct state *state, struct rect *initial_area) {
 
 static void noop() {}
 
+static xkb_keysym_t latin_keysym_for_key(
+    struct xkb_keymap *keymap, xkb_keycode_t key_code
+);
+
 static void load_home_row(
     struct xkb_keymap *keymap, char **home_row, char *home_row_buffer
 ) {
@@ -172,8 +176,10 @@ static void load_home_row(
     size_t            buffer_size = HOME_ROW_BUFFER_LEN;
 
     for (int i = 0; i < sizeof(key_codes) / sizeof(key_codes[0]); i++) {
-        xkb_keysym_t keysym =
-            xkb_state_key_get_one_sym(xkb_state, key_codes[i]);
+        xkb_keysym_t keysym = latin_keysym_for_key(keymap, key_codes[i]);
+        if (keysym == XKB_KEY_NoSymbol) {
+            keysym = xkb_state_key_get_one_sym(xkb_state, key_codes[i]);
+        }
         int char_len = xkb_keysym_to_utf8(keysym, buffer, buffer_size);
         if (char_len < 0) {
             LOG_ERR("Could not load home row keys. Buffer is too small.");
@@ -244,6 +250,33 @@ static void handle_keyboard_keymap(
     seat->xkb_state = xkb_state_new(seat->xkb_keymap);
 }
 
+// Returns a Latin (ASCII letter or digit) keysym for the physical key by
+// scanning every layout, so labels keep matching when a non-Latin layout
+// (e.g. Cyrillic) is active. Falls back to XKB_KEY_NoSymbol if none is found.
+static xkb_keysym_t latin_keysym_for_key(
+    struct xkb_keymap *keymap, xkb_keycode_t key_code
+) {
+    const xkb_layout_index_t num_layouts =
+        xkb_keymap_num_layouts_for_key(keymap, key_code);
+
+    for (xkb_layout_index_t layout = 0; layout < num_layouts; layout++) {
+        const xkb_keysym_t *syms;
+        const int num_syms =
+            xkb_keymap_key_get_syms_by_level(keymap, key_code, layout, 0, &syms);
+
+        for (int i = 0; i < num_syms; i++) {
+            const xkb_keysym_t sym = syms[i];
+            if ((sym >= XKB_KEY_a && sym <= XKB_KEY_z) ||
+                (sym >= XKB_KEY_A && sym <= XKB_KEY_Z) ||
+                (sym >= XKB_KEY_0 && sym <= XKB_KEY_9)) {
+                return sym;
+            }
+        }
+    }
+
+    return XKB_KEY_NoSymbol;
+}
+
 static void handle_keyboard_key(
     void *data, struct wl_keyboard *keyboard, uint32_t serial, uint32_t time,
     uint32_t key, uint32_t key_state
@@ -253,7 +286,16 @@ static void handle_keyboard_key(
     const xkb_keycode_t key_code = key + 8;
     const xkb_keysym_t  key_sym =
         xkb_state_key_get_one_sym(seat->xkb_state, key_code);
-    xkb_keysym_to_utf8(key_sym, text, sizeof(text));
+
+    // Match labels against the Latin symbol of the physical key so they work
+    // regardless of the active keyboard layout. Special keys (Escape, arrows,
+    // ...) are layout-independent and keep using the active keysym.
+    const xkb_keysym_t latin_sym = latin_keysym_for_key(seat->xkb_keymap, key_code);
+    if (latin_sym != XKB_KEY_NoSymbol) {
+        xkb_keysym_to_utf8(latin_sym, text, sizeof(text));
+    } else {
+        xkb_keysym_to_utf8(key_sym, text, sizeof(text));
+    }
 
     if (key_state == WL_KEYBOARD_KEY_STATE_PRESSED) {
         bool redraw = mode_handle_key(seat->state, key_sym, text);
