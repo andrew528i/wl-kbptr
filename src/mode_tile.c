@@ -125,6 +125,15 @@ void tile_mode_render(struct state *state, void *mode_state, cairo_t *cairo) {
     struct mode_tile_config *config = &state->config.mode_tile;
     struct tile_mode_state  *ms     = mode_state;
 
+    // Highlight selectable cells in orange while picking drag points so it is
+    // obvious that drag-and-drop mode is active.
+    uint32_t selectable_bg_color     = config->selectable_bg_color;
+    uint32_t selectable_border_color = config->selectable_border_color;
+    if (state->drag_phase != DRAG_OFF) {
+        selectable_bg_color     = 0xe05a0033;
+        selectable_border_color = 0xff6400ff;
+    }
+
     cairo_set_font_face(cairo, ms->label_font_face);
     cairo_set_font_size(
         cairo, compute_relative_font_size(
@@ -168,11 +177,11 @@ void tile_mode_render(struct state *state, void *mode_state, cairo_t *cairo) {
 
             cairo_set_operator(cairo, CAIRO_OPERATOR_SOURCE);
             if (selectable) {
-                cairo_set_source_u32(cairo, config->selectable_bg_color);
+                cairo_set_source_u32(cairo, selectable_bg_color);
                 cairo_rectangle(cairo, x, y, w, h);
                 cairo_fill(cairo);
 
-                cairo_set_source_u32(cairo, config->selectable_border_color);
+                cairo_set_source_u32(cairo, selectable_border_color);
                 cairo_rectangle(cairo, x + .5, y + .5, w - 1, h - 1);
                 cairo_set_line_width(cairo, 1);
                 cairo_stroke(cairo);

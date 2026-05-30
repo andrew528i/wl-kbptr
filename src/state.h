@@ -38,6 +38,15 @@
 #define MAX_NUM_MODES   3
 #define NO_MODE_ENTERED -1
 
+// Drag-and-drop is performed by selecting two points: the press location
+// (DRAG_PICK_FROM) and the release location (DRAG_PICK_TO). DRAG_OFF is the
+// regular single-click behaviour.
+enum drag_phase {
+    DRAG_OFF = 0,
+    DRAG_PICK_FROM,
+    DRAG_PICK_TO,
+};
+
 struct mode_interface;
 
 struct tile_mode_state {
@@ -138,6 +147,8 @@ struct state {
     void                          *mode_states[MAX_NUM_MODES];
     int                            current_mode;
     enum click                     click;
+    enum drag_phase                drag_phase;
+    struct rect                    drag_from;
 };
 
 #endif

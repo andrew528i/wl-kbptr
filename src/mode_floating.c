@@ -154,6 +154,15 @@ void floating_mode_render(
     struct floating_mode_state  *ms     = mode_state;
     struct mode_floating_config *config = &state->config.mode_floating;
 
+    // Highlight selectable targets in orange while picking drag points so it
+    // is obvious that drag-and-drop mode is active.
+    uint32_t selectable_bg_color     = config->selectable_bg_color;
+    uint32_t selectable_border_color = config->selectable_border_color;
+    if (state->drag_phase != DRAG_OFF) {
+        selectable_bg_color     = 0xe05a0033;
+        selectable_border_color = 0xff6400ff;
+    }
+
     label_selection_t *curr_label =
         label_selection_new(ms->label_symbols, ms->num_areas);
     label_selection_set_from_idx(curr_label, 0);
@@ -192,12 +201,12 @@ void floating_mode_render(
 
         if (selectable) {
             cairo_set_operator(cairo, CAIRO_OPERATOR_OVER);
-            cairo_set_source_u32(cairo, config->selectable_bg_color);
+            cairo_set_source_u32(cairo, selectable_bg_color);
             cairo_rectangle(cairo, a.x, a.y, a.w, a.h);
             cairo_fill(cairo);
 
             cairo_set_operator(cairo, CAIRO_OPERATOR_SOURCE);
-            cairo_set_source_u32(cairo, config->selectable_border_color);
+            cairo_set_source_u32(cairo, selectable_border_color);
             cairo_rectangle(cairo, a.x + .5, a.y + .5, a.w - 1, a.h - 1);
             cairo_set_line_width(cairo, 1);
             cairo_stroke(cairo);

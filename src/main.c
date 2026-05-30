@@ -24,6 +24,8 @@
 #include <xkbcommon/xkbcommon-keysyms.h>
 #include <xkbcommon/xkbcommon.h>
 
+static void restart_mode_chain(struct state *state);
+
 static void send_frame(struct state *state) {
     int32_t scale_120 = state->fractional_scale;
     if (scale_120 == 0) {
@@ -297,13 +299,46 @@ static void handle_keyboard_key(
         xkb_keysym_to_utf8(key_sym, text, sizeof(text));
     }
 
-    if (key_state == WL_KEYBOARD_KEY_STATE_PRESSED) {
-        bool redraw = mode_handle_key(seat->state, key_sym, text);
-        if (has_last_mode_returned(seat->state)) {
-            seat->state->running = false;
-        } else if (redraw) {
-            request_frame(seat->state);
+    if (key_state != WL_KEYBOARD_KEY_STATE_PRESSED) {
+        return;
+    }
+
+    struct state *state = seat->state;
+
+    // F3 toggles drag-and-drop mode. Before the first point is picked it just
+    // toggles on/off; once the first point is picked (DRAG_PICK_TO) it cancels
+    // the in-progress drag and returns to the regular mode.
+    if (key_sym == XKB_KEY_F3) {
+        switch (state->drag_phase) {
+        case DRAG_OFF:
+            state->drag_phase = DRAG_PICK_FROM;
+            break;
+        case DRAG_PICK_FROM:
+            state->drag_phase = DRAG_OFF;
+            break;
+        case DRAG_PICK_TO:
+            state->drag_phase = DRAG_OFF;
+            state->drag_from  = (struct rect){-1, -1, -1, -1};
+            restart_mode_chain(state);
+            return;
         }
+        request_frame(state);
+        return;
+    }
+
+    bool redraw = mode_handle_key(state, key_sym, text);
+    if (has_last_mode_returned(state)) {
+        if (state->drag_phase == DRAG_PICK_FROM) {
+            // First point picked; keep running and restart the chain to pick
+            // the release point.
+            state->drag_from  = state->result;
+            state->drag_phase = DRAG_PICK_TO;
+            restart_mode_chain(state);
+        } else {
+            state->running = false;
+        }
+    } else if (redraw) {
+        request_frame(state);
     }
 }
 
@@ -484,6 +519,18 @@ static void enter_first_mode(struct state *state) {
         if (state->running) {
             send_frame(state);
         }
+    }
+}
+
+// Tears down the current mode chain and starts it again from the first mode,
+// used to pick the second point of a drag and to cancel a started drag.
+static void restart_mode_chain(struct state *state) {
+    free_mode_states(state);
+    state->current_mode = NO_MODE_ENTERED;
+    state->result       = (struct rect){-1, -1, -1, -1};
+    enter_first_mode(state);
+    if (state->running) {
+        send_frame(state);
     }
 }
 
@@ -728,7 +775,9 @@ int main(int argc, char **argv) {
         .result               = (struct rect){-1, -1, -1, -1},
         .initial_area         = (struct rect){-1, -1, -1, -1},
         .home_row = (char *[]){"", "", "", "", "", "", "", "", "", "", ""},
-        .click    = CLICK_NONE,
+        .click      = CLICK_NONE,
+        .drag_phase = DRAG_OFF,
+        .drag_from  = (struct rect){-1, -1, -1, -1},
     };
 
     config_set_default(&state.config);
@@ -971,7 +1020,19 @@ int main(int argc, char **argv) {
     wl_display_roundtrip(state.wl_display);
 
     int status_code = 0;
-    if (state.result.x != -1) {
+    if (state.drag_phase == DRAG_PICK_TO && state.result.x != -1 &&
+        state.drag_from.x != -1) {
+        // Drag-and-drop: press at the first point, release at the second.
+        print_result(&state);
+        if (!only_print) {
+            drag_pointer(
+                &state, state.drag_from.x + state.drag_from.w / 2,
+                state.drag_from.y + state.drag_from.h / 2,
+                state.result.x + state.result.w / 2,
+                state.result.y + state.result.h / 2
+            );
+        }
+    } else if (state.result.x != -1) {
         print_result(&state);
         if (!only_print) {
             move_pointer(
