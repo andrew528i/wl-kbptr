@@ -253,8 +253,9 @@ query_kwin_screenshot(struct state *state, struct rect region) {
     r = sd_bus_call_method(
         bus, "org.kde.KWin.ScreenShot2", "/org/kde/KWin/ScreenShot2",
         "org.kde.KWin.ScreenShot2", "CaptureArea", &error, &reply,
-        "iiiia{sv}h", state->current_output->x + region.x,
-        state->current_output->y + region.y, region.w, region.h, 1,
+        "iiuua{sv}h", state->current_output->x + region.x,
+        state->current_output->y + region.y, (uint32_t)region.w,
+        (uint32_t)region.h, 1,
         "native-resolution", "b", 1, fds[1]
     );
     close(fds[1]);
