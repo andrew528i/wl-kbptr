@@ -179,9 +179,13 @@ void floating_mode_render(
 
     cairo_set_font_face(cairo, ms->label_font_face);
 
+    const struct rect area = state->initial_area;
     cairo_set_operator(cairo, CAIRO_OPERATOR_SOURCE);
-    cairo_set_source_u32(cairo, config->unselectable_bg_color);
+    cairo_set_source_rgba(cairo, 0, 0, 0, 0);
     cairo_paint(cairo);
+    cairo_set_source_u32(cairo, config->unselectable_bg_color);
+    cairo_rectangle(cairo, area.x, area.y, area.w, area.h);
+    cairo_fill(cairo);
 
     cairo_set_operator(cairo, CAIRO_OPERATOR_SOURCE);
     for (int i = 0; i < ms->num_areas; i++) {
