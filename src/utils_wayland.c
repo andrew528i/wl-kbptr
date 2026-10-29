@@ -1,5 +1,6 @@
 #include "utils_wayland.h"
 
+#include "eis.h"
 #include "state.h"
 #include "wlr-virtual-pointer-unstable-v1-client-protocol.h"
 
@@ -71,120 +72,136 @@ static void _apply_transform(
     }
 }
 
-void move_pointer(
-    struct state *state, uint32_t x, uint32_t y, enum click click
-) {
-    if (!state->wl_virtual_pointer_mgr) {
-        // We running in `--print-only` mode.
-        return;
+struct pointer {
+    struct state                   *state;
+    struct zwlr_virtual_pointer_v1 *wlr;
+};
+
+// Picks the wlr virtual pointer when the compositor has one and KWin's EIS
+// otherwise. Returns false when there is nothing to drive, which is the case in
+// `--only-print` mode.
+static bool pointer_begin(struct state *state, struct pointer *pointer) {
+    pointer->state = state;
+    pointer->wlr   = NULL;
+
+    if (state->wl_virtual_pointer_mgr) {
+        wl_display_roundtrip(state->wl_display);
+        pointer->wlr =
+            zwlr_virtual_pointer_manager_v1_create_virtual_pointer_with_output(
+                state->wl_virtual_pointer_mgr,
+                ((struct seat *)state->seats.next)->wl_seat,
+                state->current_output->wl_output
+            );
+        return true;
     }
 
-    wl_display_roundtrip(state->wl_display);
-
-    struct zwlr_virtual_pointer_v1 *virt_pointer =
-        zwlr_virtual_pointer_manager_v1_create_virtual_pointer_with_output(
-            state->wl_virtual_pointer_mgr,
-            ((struct seat *)state->seats.next)->wl_seat,
-            state->current_output->wl_output
-        );
-
-    uint32_t output_width  = state->current_output->width;
-    uint32_t output_height = state->current_output->height;
-
-    _apply_transform(
-        &x, &y, &output_width, &output_height, state->current_output->transform
-    );
-
-    zwlr_virtual_pointer_v1_motion_absolute(
-        virt_pointer, 0, x, y, output_width, output_height
-    );
-    zwlr_virtual_pointer_v1_frame(virt_pointer);
-    wl_display_roundtrip(state->wl_display);
-
-    if (state->click != CLICK_NONE) {
-        int btn = 271 + click;
-
-        zwlr_virtual_pointer_v1_button(
-            virt_pointer, 0, btn, WL_POINTER_BUTTON_STATE_PRESSED
-        );
-        zwlr_virtual_pointer_v1_frame(virt_pointer);
-        wl_display_roundtrip(state->wl_display);
-
-        zwlr_virtual_pointer_v1_button(
-            virt_pointer, 0, btn, WL_POINTER_BUTTON_STATE_RELEASED
-        );
-        zwlr_virtual_pointer_v1_frame(virt_pointer);
-        wl_display_roundtrip(state->wl_display);
+#if KWIN_ENABLED
+    if (state->ei_device) {
+        eis_begin(state);
+        return true;
     }
+#endif
 
-    zwlr_virtual_pointer_v1_destroy(virt_pointer);
+    return false;
 }
 
-static void emit_motion(
-    struct state *state, struct zwlr_virtual_pointer_v1 *virt_pointer,
-    uint32_t x, uint32_t y
-) {
-    uint32_t tx     = x;
-    uint32_t ty     = y;
+static void pointer_motion(struct pointer *pointer, uint32_t x, uint32_t y) {
+    struct state *state = pointer->state;
+
+#if KWIN_ENABLED
+    if (pointer->wlr == NULL) {
+        eis_motion(state, x, y);
+        return;
+    }
+#endif
+
     uint32_t width  = state->current_output->width;
     uint32_t height = state->current_output->height;
 
-    _apply_transform(&tx, &ty, &width, &height, state->current_output->transform);
+    _apply_transform(&x, &y, &width, &height, state->current_output->transform);
 
-    zwlr_virtual_pointer_v1_motion_absolute(
-        virt_pointer, 0, tx, ty, width, height
-    );
-    zwlr_virtual_pointer_v1_frame(virt_pointer);
+    zwlr_virtual_pointer_v1_motion_absolute(pointer->wlr, 0, x, y, width, height);
+    zwlr_virtual_pointer_v1_frame(pointer->wlr);
     wl_display_roundtrip(state->wl_display);
+}
+
+static void pointer_button(struct pointer *pointer, int button, bool pressed) {
+#if KWIN_ENABLED
+    if (pointer->wlr == NULL) {
+        eis_button(pointer->state, button, pressed);
+        return;
+    }
+#endif
+
+    zwlr_virtual_pointer_v1_button(
+        pointer->wlr, 0, button,
+        pressed ? WL_POINTER_BUTTON_STATE_PRESSED
+                : WL_POINTER_BUTTON_STATE_RELEASED
+    );
+    zwlr_virtual_pointer_v1_frame(pointer->wlr);
+    wl_display_roundtrip(pointer->state->wl_display);
+}
+
+static void pointer_end(struct pointer *pointer) {
+#if KWIN_ENABLED
+    if (pointer->wlr == NULL) {
+        eis_end(pointer->state);
+        return;
+    }
+#endif
+
+    zwlr_virtual_pointer_v1_destroy(pointer->wlr);
+}
+
+void move_pointer(
+    struct state *state, uint32_t x, uint32_t y, enum click click
+) {
+    struct pointer pointer;
+    if (!pointer_begin(state, &pointer)) {
+        return;
+    }
+
+    pointer_motion(&pointer, x, y);
+
+    if (state->click != CLICK_NONE) {
+        int btn = 271 + click;
+        pointer_button(&pointer, btn, true);
+        pointer_button(&pointer, btn, false);
+    }
+
+    pointer_end(&pointer);
 }
 
 void drag_pointer(
     struct state *state, uint32_t from_x, uint32_t from_y, uint32_t to_x,
     uint32_t to_y
 ) {
-    if (!state->wl_virtual_pointer_mgr) {
-        // Running in `--print-only` mode.
+    struct pointer pointer;
+    if (!pointer_begin(state, &pointer)) {
         return;
     }
-
-    wl_display_roundtrip(state->wl_display);
-
-    struct zwlr_virtual_pointer_v1 *virt_pointer =
-        zwlr_virtual_pointer_manager_v1_create_virtual_pointer_with_output(
-            state->wl_virtual_pointer_mgr,
-            ((struct seat *)state->seats.next)->wl_seat,
-            state->current_output->wl_output
-        );
 
     const int btn = 271 + CLICK_LEFT_BTN;
 
     // Move to the press point and let it settle.
-    emit_motion(state, virt_pointer, from_x, from_y);
+    pointer_motion(&pointer, from_x, from_y);
     usleep(DRAG_SETTLE_US);
 
     // Press and hold.
-    zwlr_virtual_pointer_v1_button(
-        virt_pointer, 0, btn, WL_POINTER_BUTTON_STATE_PRESSED
-    );
-    zwlr_virtual_pointer_v1_frame(virt_pointer);
-    wl_display_roundtrip(state->wl_display);
+    pointer_button(&pointer, btn, true);
     usleep(DRAG_PRESS_US);
 
     // Move to the target in small steps so apps register a real drag.
     for (int i = 1; i <= DRAG_STEPS; i++) {
         uint32_t x = from_x + (int64_t)(to_x - from_x) * i / DRAG_STEPS;
         uint32_t y = from_y + (int64_t)(to_y - from_y) * i / DRAG_STEPS;
-        emit_motion(state, virt_pointer, x, y);
+        pointer_motion(&pointer, x, y);
         usleep(DRAG_STEP_US);
     }
 
     // Pause on the target, then release.
     usleep(DRAG_RELEASE_US);
-    zwlr_virtual_pointer_v1_button(
-        virt_pointer, 0, btn, WL_POINTER_BUTTON_STATE_RELEASED
-    );
-    zwlr_virtual_pointer_v1_frame(virt_pointer);
-    wl_display_roundtrip(state->wl_display);
+    pointer_button(&pointer, btn, false);
 
-    zwlr_virtual_pointer_v1_destroy(virt_pointer);
+    pointer_end(&pointer);
 }

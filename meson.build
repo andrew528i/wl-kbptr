@@ -8,6 +8,7 @@ project(
 )
 
 use_opencv = get_option('opencv').enabled()
+use_kwin = get_option('kwin').enabled()
 version_suffix = ''
 
 if get_option('buildtype') == 'debug'
@@ -28,6 +29,12 @@ if use_opencv
   add_languages('cpp', native: false)
   opencv = dependency('opencv4')
   pixman = dependency('pixman-1')
+endif
+
+if use_kwin
+  add_project_arguments('-DKWIN_ENABLED=1', language: ['c', 'cpp'])
+  libei = dependency('libei-1.0')
+  libsystemd = dependency('libsystemd')
 endif
 
 wayland_client = dependency('wayland-client')
@@ -70,6 +77,11 @@ if use_opencv
   dependencies += [opencv, pixman]
 endif
 
+if use_kwin
+  sources += 'src/eis.c'
+  dependencies += [libei, libsystemd]
+endif
+
 executable(
   'wl-kbptr',
   sources,
@@ -88,8 +100,12 @@ label_test_exec = executable(
 
 test('test_label', label_test_exec)
 
-install_data(
-  'share/wl-kbptr.desktop',
-  rename: 'wl-kbptr.desktop',
-  install_dir: 'share/applications',
+configure_file(
+  input: 'share/wl-kbptr.desktop.in',
+  output: 'wl-kbptr.desktop',
+  configuration: {
+    'BINDIR': get_option('prefix') / get_option('bindir'),
+    'KWIN_INTERFACES': use_kwin ? 'X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2' : '',
+  },
+  install_dir: get_option('datadir') / 'applications',
 )

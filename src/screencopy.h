@@ -6,12 +6,13 @@
 #include <wayland-client.h>
 
 struct scrcpy_buffer {
-    struct wl_buffer  *wl_buffer;
-    void              *data;
-    enum wl_shm_format format;
-    int32_t            width;
-    int32_t            height;
-    int32_t            stride;
+    struct wl_buffer        *wl_buffer;
+    void                    *data;
+    enum wl_shm_format       format;
+    enum wl_output_transform transform;
+    int32_t                  width;
+    int32_t                  height;
+    int32_t                  stride;
 };
 
 struct state;

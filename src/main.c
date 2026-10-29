@@ -1,4 +1,5 @@
 #include "config.h"
+#include "eis.h"
 #include "fractional-scale-v1-client-protocol.h"
 #include "log.h"
 #include "mode.h"
@@ -922,8 +923,18 @@ int main(int argc, char **argv) {
     }
 
     if (state.wl_virtual_pointer_mgr == NULL && !only_print) {
+#if KWIN_ENABLED
+        if (!eis_connect(&state)) {
+            LOG_ERR(
+                "Failed to get wlr_virtual_pointer_manager_v1 object or a "
+                "pointer through KWin's EIS."
+            );
+            return 1;
+        }
+#else
         LOG_ERR("Failed to get wlr_virtual_pointer_manager_v1 object.");
         return 1;
+#endif
     }
 
     if (state.xdg_output_manager == NULL) {
@@ -1047,6 +1058,10 @@ int main(int argc, char **argv) {
     if (state.wl_virtual_pointer_mgr != NULL) {
         zwlr_virtual_pointer_manager_v1_destroy(state.wl_virtual_pointer_mgr);
     }
+
+#if KWIN_ENABLED
+    eis_disconnect(&state);
+#endif
 
     free_seats(&state.seats);
     free_outputs(&state.outputs);

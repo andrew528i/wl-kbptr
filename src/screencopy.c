@@ -8,12 +8,22 @@
 #include "state.h"
 #include "surface_buffer.h"
 
+#include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <unistd.h>
+
+#if KWIN_ENABLED
+#include <systemd/sd-bus.h>
+
+// `QImage::Format` values that KWin's ScreenShot2 hands raw images out in.
+#define QIMAGE_FORMAT_RGB32                4
+#define QIMAGE_FORMAT_ARGB32               5
+#define QIMAGE_FORMAT_ARGB32_PREMULTIPLIED 6
+#endif
 
 enum capture_phase {
     CAP_INIT,
@@ -67,6 +77,7 @@ static struct scrcpy_buffer *create_scrcpy_buffer(
     struct scrcpy_buffer *buffer = malloc(sizeof(*buffer));
     buffer->wl_buffer = wl_buffer;
     buffer->format    = format;
+    buffer->transform = WL_OUTPUT_TRANSFORM_NORMAL;
     buffer->data      = data;
     buffer->width     = width;
     buffer->height    = height;
@@ -171,11 +182,138 @@ static struct scrcpy_buffer *crop_buffer(
     return cropped;
 }
 
+#if KWIN_ENABLED
+static bool read_screenshot_attributes(
+    sd_bus_message *reply, uint32_t *width, uint32_t *height, uint32_t *stride,
+    uint32_t *format
+) {
+    int r = sd_bus_message_enter_container(reply, 'a', "{sv}");
+    if (r < 0) {
+        return false;
+    }
+
+    while ((r = sd_bus_message_enter_container(reply, 'e', "sv")) > 0) {
+        const char *key;
+        if (sd_bus_message_read(reply, "s", &key) < 0) {
+            return false;
+        }
+
+        uint32_t *value = strcmp(key, "width") == 0    ? width
+                          : strcmp(key, "height") == 0 ? height
+                          : strcmp(key, "stride") == 0 ? stride
+                          : strcmp(key, "format") == 0 ? format
+                                                       : NULL;
+        r = value ? sd_bus_message_read(reply, "v", "u", value)
+                  : sd_bus_message_skip(reply, "v");
+        if (r < 0 || sd_bus_message_exit_container(reply) < 0) {
+            return false;
+        }
+    }
+
+    return r >= 0 && sd_bus_message_exit_container(reply) >= 0;
+}
+
+static bool read_all(int fd, void *data, size_t size) {
+    size_t done = 0;
+    while (done < size) {
+        ssize_t n = read(fd, (char *)data + done, size - done);
+        if (n < 0 && errno == EINTR) {
+            continue;
+        }
+        if (n <= 0) {
+            return false;
+        }
+        done += n;
+    }
+    return true;
+}
+
+// Fallback for KWin, which has no image copy capture protocol. The caller must
+// be allowed `org.kde.KWin.ScreenShot2` by `X-KDE-DBUS-Restricted-Interfaces`
+// in the desktop file of its executable.
+static struct scrcpy_buffer *
+query_kwin_screenshot(struct state *state, struct rect region) {
+    struct scrcpy_buffer *buffer = NULL;
+    sd_bus               *bus    = NULL;
+    sd_bus_message       *reply  = NULL;
+    sd_bus_error          error  = SD_BUS_ERROR_NULL;
+    int                   fds[2] = {-1, -1};
+
+    int r = sd_bus_open_user(&bus);
+    if (r < 0) {
+        LOG_ERR("Failed to connect to the session bus: %s.", strerror(-r));
+        goto out;
+    }
+
+    if (pipe2(fds, O_CLOEXEC) == -1) {
+        LOG_ERR("Could not create a pipe for the screenshot.");
+        goto out;
+    }
+
+    r = sd_bus_call_method(
+        bus, "org.kde.KWin.ScreenShot2", "/org/kde/KWin/ScreenShot2",
+        "org.kde.KWin.ScreenShot2", "CaptureArea", &error, &reply,
+        "iiiia{sv}h", state->current_output->x + region.x,
+        state->current_output->y + region.y, region.w, region.h, 1,
+        "native-resolution", "b", 1, fds[1]
+    );
+    close(fds[1]);
+    if (r < 0) {
+        LOG_ERR(
+            "KWin screenshot failed: %s.",
+            error.message ? error.message : strerror(-r)
+        );
+        goto out;
+    }
+
+    uint32_t width = 0, height = 0, stride = 0, format = 0;
+    if (!read_screenshot_attributes(reply, &width, &height, &stride, &format)) {
+        LOG_ERR("Unexpected reply from KWin's screenshot interface.");
+        goto out;
+    }
+
+    enum wl_shm_format shm_format;
+    switch (format) {
+    case QIMAGE_FORMAT_RGB32:
+        shm_format = WL_SHM_FORMAT_XRGB8888;
+        break;
+    case QIMAGE_FORMAT_ARGB32:
+    case QIMAGE_FORMAT_ARGB32_PREMULTIPLIED:
+        shm_format = WL_SHM_FORMAT_ARGB8888;
+        break;
+    default:
+        LOG_ERR("Unsupported KWin screenshot format %u.", format);
+        goto out;
+    }
+
+    buffer = create_scrcpy_buffer(state->wl_shm, shm_format, width, height, stride);
+    if (buffer != NULL &&
+        !read_all(fds[0], buffer->data, (size_t)stride * height)) {
+        LOG_ERR("Could not read the KWin screenshot.");
+        destroy_scrcpy_buffer(buffer);
+        buffer = NULL;
+    }
+
+out:
+    if (fds[0] != -1) {
+        close(fds[0]);
+    }
+    sd_bus_message_unref(reply);
+    sd_bus_error_free(&error);
+    sd_bus_flush_close_unref(bus);
+    return buffer;
+}
+#endif
+
 struct scrcpy_buffer *
 query_screenshot(struct state *state, struct rect region) {
     if (state->ext_capture_manager == NULL) {
+#if KWIN_ENABLED
+        return query_kwin_screenshot(state, region);
+#else
         LOG_ERR("Could not load `ext_image_copy_capture_manager_v1`.");
         exit(1);
+#endif
     }
 
     if (state->ext_output_source_manager == NULL) {
@@ -290,6 +428,9 @@ query_screenshot(struct state *state, struct rect region) {
 
     struct scrcpy_buffer *cropped =
         crop_buffer(cs.buffer, state->wl_shm, crop_x, crop_y, crop_w, crop_h);
+    if (cropped != NULL) {
+        cropped->transform = state->current_output->transform;
+    }
 
     destroy_scrcpy_buffer(cs.buffer);
 

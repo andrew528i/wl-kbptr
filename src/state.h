@@ -131,6 +131,12 @@ struct state {
     struct ext_image_copy_capture_manager_v1 *ext_capture_manager;
     struct ext_output_image_capture_source_manager_v1 *ext_output_source_manager;
 #endif
+#if KWIN_ENABLED
+    struct sd_bus    *sd_bus;
+    struct ei        *ei;
+    struct ei_device *ei_device;
+    uint32_t          ei_sequence;
+#endif
     struct zxdg_output_manager_v1 *xdg_output_manager;
     struct wl_list                 outputs;
     struct wl_list                 seats;
