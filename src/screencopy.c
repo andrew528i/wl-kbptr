@@ -20,9 +20,12 @@
 #include <systemd/sd-bus.h>
 
 // `QImage::Format` values that KWin's ScreenShot2 hands raw images out in.
-#define QIMAGE_FORMAT_RGB32                4
-#define QIMAGE_FORMAT_ARGB32               5
-#define QIMAGE_FORMAT_ARGB32_PREMULTIPLIED 6
+#define QIMAGE_FORMAT_RGB32                  4
+#define QIMAGE_FORMAT_ARGB32                 5
+#define QIMAGE_FORMAT_ARGB32_PREMULTIPLIED   6
+#define QIMAGE_FORMAT_RGBX8888               16
+#define QIMAGE_FORMAT_RGBA8888               17
+#define QIMAGE_FORMAT_RGBA8888_PREMULTIPLIED 18
 #endif
 
 enum capture_phase {
@@ -273,7 +276,10 @@ query_kwin_screenshot(struct state *state, struct rect region) {
         goto out;
     }
 
+    // The RGBA formats are byte ordered R, G, B, A. KWin doesn't offer their
+    // wl_shm counterparts, so their red and blue are swapped into ARGB order.
     enum wl_shm_format shm_format;
+    bool               swap_red_blue = false;
     switch (format) {
     case QIMAGE_FORMAT_RGB32:
         shm_format = WL_SHM_FORMAT_XRGB8888;
@@ -281,6 +287,15 @@ query_kwin_screenshot(struct state *state, struct rect region) {
     case QIMAGE_FORMAT_ARGB32:
     case QIMAGE_FORMAT_ARGB32_PREMULTIPLIED:
         shm_format = WL_SHM_FORMAT_ARGB8888;
+        break;
+    case QIMAGE_FORMAT_RGBX8888:
+        shm_format    = WL_SHM_FORMAT_XRGB8888;
+        swap_red_blue = true;
+        break;
+    case QIMAGE_FORMAT_RGBA8888:
+    case QIMAGE_FORMAT_RGBA8888_PREMULTIPLIED:
+        shm_format    = WL_SHM_FORMAT_ARGB8888;
+        swap_red_blue = true;
         break;
     default:
         LOG_ERR("Unsupported KWin screenshot format %u.", format);
@@ -293,6 +308,16 @@ query_kwin_screenshot(struct state *state, struct rect region) {
         LOG_ERR("Could not read the KWin screenshot.");
         destroy_scrcpy_buffer(buffer);
         buffer = NULL;
+    }
+    if (buffer != NULL && swap_red_blue) {
+        for (uint32_t y = 0; y < height; y++) {
+            uint8_t *pixel = (uint8_t *)buffer->data + (size_t)y * stride;
+            for (uint32_t x = 0; x < width; x++, pixel += 4) {
+                uint8_t red = pixel[0];
+                pixel[0]    = pixel[2];
+                pixel[2]    = red;
+            }
+        }
     }
 
 out:
